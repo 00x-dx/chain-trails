@@ -1,0 +1,23 @@
+provider:
+  urls:
+    # - "https://rpc.eu-central-1.gateway.fm/v4/lukso/non-archival/testnet"
+    # - "http://localhost:8545"
+    # - "https://rpc.testnet.lukso.gateway.fm"
+    - "https://rpc.eu-central-1.gateway.fm/v4/lukso/non-archival/mainnet"
+    # - "https://rpc.testnet.lukso.gateway.fm/v4/lukso/non-archival/mainnet"
+queue:
+  url: "redis://localhost:6379"
+  list:
+    backlog: "lukso:backlog"
+    live: "lukso:live"
+mongo:
+  url: "mongodb://localhost:27017"
+  db: "luksoMainnet"
+  collection:
+    blocks: "blocks"
+    transactions: "txs"
+    logs: "logs"
+    traces: "traces"
+    dlq: "dlq"
+    backlog: "backlog"
+    checkpoints: "checkpoints"

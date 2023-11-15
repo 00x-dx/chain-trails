@@ -1,0 +1,31 @@
+{
+  "name": "chain-trails",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node LiveIndex.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@apla/clickhouse": "^1.6.4",
+    "alchemy-sdk": "^2.10.1",
+    "axios": "^1.6.0",
+    "bee-queue": "^1.6.0",
+    "bull": "^4.11.4",
+    "ethers": "^6.8.0",
+    "fs": "^0.0.1-security",
+    "js-yaml": "^4.1.0",
+    "kafkajs": "^2.2.4",
+    "knex": "^3.0.1",
+    "mongodb": "^6.2.0",
+    "mysql": "^2.18.1",
+    "nconf": "^0.12.1",
+    "superagent": "^8.1.2",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "ioredis": "^5.3.2"
+  }
+}
