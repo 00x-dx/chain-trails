@@ -14,7 +14,7 @@ queue:
     live: "lukso:live"
     dlq: "lukso:dlq"
 clickhouse:
-  host: "http://148.113.17.15:8123"
+  host: "http://localhost:8123"
   user: "default"
   password: "xyz"
   database: "mainnet"
