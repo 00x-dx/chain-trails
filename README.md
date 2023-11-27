@@ -7,7 +7,10 @@ creds: admin/6dT~TD'qd6%G'zU
 ```
 redis
 clickhouse
+pm2
 ```
+## Catching historical data:
+* You can modify 
 ## Migrations:
 * Run migrations from migrations/
 * Update creds in config.yaml
