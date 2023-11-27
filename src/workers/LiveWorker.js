@@ -3,8 +3,8 @@ class LiveWorker {
 
     async process() {
         liveQueue.process(1, async (job) => {
-            await processor.block(job.data.blockNumber, false, false, true);
-            console.log("Processing Job: ", job.data);
+            await processor.process(job.data.blocks);
+            console.log("Processing Job: ", job.data.blocks[0]);
             return done(null, job.data);
         });
     }

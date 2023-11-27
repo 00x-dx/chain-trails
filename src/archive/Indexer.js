@@ -1,16 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const { MongoClient, Long } = require('mongodb');
-const Utils = require("./src/Utils/helpers");
+const Utils = require("../Utils/helpers");
+
 const {convertObjectToArray} = require("ioredis/built/utils");
-const mysql = require('mysql');
-const connectionConfig = {
-    host: '127.0.0.1', // or the IP address or hostname of your database server
-    user: 'root',
-    password: 'mysql',
-    database: 'mainnet'
+const chConfig = {
+    host: 'http://148.113.17.15:8123',
+    database: 'mainnet',
+    password: 'aMIDGxeb5WNO3uDuZGCbJb9TZMXg'
 };
 const DbProxy  = require('./src/dbproxy');
+const CHProxy = require('../CHProxy')
 
 class Indexer {
 
@@ -28,12 +28,12 @@ class Indexer {
         txInfo.nonce = Utils.Int(tx.nonce);
         txInfo.calldata_size = Utils.HexToBytes(tx.input);
         txInfo.timestamp = block.timestamp;
-        txInfo.time = new Date(txInfo.timestamp * 1000);
+        txInfo.time = block.time;
         txInfo.value = parseFloat(Utils.FormatValue(tx.value));
         txInfo.input = tx.input;
         //txInfo.meta = block.meta.time;
         txInfo.method_id = Utils.MethodID(tx.input);
-        Object.assign(txInfo, Utils.TimeMeta(txInfo.time));
+        Object.assign(txInfo, Utils.TimeMeta(txInfo.timestamp));
         return txInfo;
     }
 
@@ -57,9 +57,10 @@ class Indexer {
         blockInfo.gas_used = Utils.Int(entry.gasUsed);
         blockInfo.size = Utils.Int(entry.size);
         blockInfo.timestamp = Utils.Int(entry.timestamp);
-        blockInfo.time = new Date(entry.timestamp * 1000);
+        blockInfo.time = Utils.TruncDateUTC(entry.timestamp)
 
-        Object.assign(blockInfo, Utils.TimeMeta(blockInfo.time));
+
+        Object.assign(blockInfo, Utils.TimeMeta(blockInfo.timestamp));
         Object.assign(blockInfo, Utils.TxsMeta(entry.transactions));
         Object.assign(blockInfo, Utils.WithdrawalsMeta(entry.withdrawals));
 
@@ -77,12 +78,21 @@ class Indexer {
             txInfo: txInfo
         }
     }
-
-    async readAndProcessEntries(filePath) {
+    async readAndProcessLogs(filePath) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const blocks = JSON.parse(fileContent);
+        const logs = JSON.parse(fileContent);
+        let logInfo = [];
+        for(let log of logs) {
+            logInfo.push(Utils.processLogEntry(log));
+        }
+        return logInfo;
+    }
+    async readAndProcessEntries(blockFile) {
+        const blockFileContent = fs.readFileSync(blockFile, 'utf-8');
+        const blocks = JSON.parse(blockFileContent);
+
         let blockInfo = [];
-        let txInfo = []
+        let txInfo = [];
         for (let block of blocks) {
             let res = this.processFullBlockEntry(block);
             blockInfo.push(res.blockInfo);
@@ -93,14 +103,16 @@ class Indexer {
                 }
             }
         }
-        return [ blockInfo, txInfo ];
+
+        return [ blockInfo, txInfo];
         //return blocks.map(this.processFullBlockEntry);
     }
 
     constructor() {
-        this.blockDataDir = path.join(__dirname, 'blocks-tx-archive');
+        this.blockDataDir = path.join('/home/tx/archive', 'blocks-tx-archive')
         this.mongoClient = new MongoClient('mongodb://localhost:27017');
         this.mysqlClient = new DbProxy(connectionConfig);
+        this.chClient = new CHProxy(chConfig);
     }
     async setup() {
         // Create indexes
@@ -133,9 +145,63 @@ class Indexer {
             process.exit(1);
         }
     }
+    async  processFiles(files, processor) {
+        const promises = files.map(async (file) => {
+            const filePath = path.join(processor.blockDataDir, file);
+            let [blockInfo, txInfo] = await processor.readAndProcessEntries(filePath);
+            if (blockInfo.length === 0) {
+                console.log(`No entries in file ${filePath}`);
+                return;
+            }
+            console.log(`Processing ${file}`, `totalEntries = ${blockInfo.length}`);
 
+            try {
+                let res = await processor.chClient.bulkWrite(blockInfo, 'blocks');
+                console.log(res);
+                console.log(`ProcessedBlocks in ${file}`, `totalEntries = ${blockInfo.length}, Persisted = true`);
+            } catch (err) {
+                console.log(err);
+            }
+
+            if (txInfo.length > 0) {
+                try {
+                    await processor.chClient.bulkWrite(txInfo, 'txs');
+                    console.log(`ProcessedTxs in  ${file}`, `totalEntries = ${txInfo.length}, Persisted = true`);
+                } catch (err) {
+                    console.log(err);
+                }
+            }
+        });
+
+        await Promise.allSettled(promises);
+    }
+    async runLogs() {
+         const files = fs.readdirSync(this.logDataDir);
+         for(const file of files) {
+             const filePath = path.join(this.logDataDir, file);
+             const logInfo = await this.readAndProcessLogs(filePath);
+             if(logInfo.length == 0) {
+                 console.log(`No logs in file ${filePath}`);
+                 continue;
+             }
+             console.log(`Processing ${file}`, `totalEntries = ${logInfo.length}`)
+
+             try {
+                 //await this.mysqlClient.bulkWrite(blockInfo, 'blocks');
+                 let res = await this.chClient.bulkWrite(logInfo, 'logs');
+                 console.log(res);
+             } catch (err) {
+                 console.log(err);
+             } finally {
+                 console.log(`ProcessedLogs in ${file}`, `totalEntries = ${logInfo.length}, Persisted = true`);
+             }
+         }
+    }
     async run() {
         const files = fs.readdirSync(this.blockDataDir);
+
+
+// Create an instance of the DbProxy
         //const files = ['./logs-archive/logs_1000000_1000099.json']
         for (const file of files) {
             const filePath = path.join(this.blockDataDir, file);
@@ -147,8 +213,9 @@ class Indexer {
             console.log(`Processing ${file}`, `totalEntries = ${blockInfo.length}`)
 
             try {
-                await this.mysqlClient.bulkWriteBlocks(blockInfo);
-
+                //await this.mysqlClient.bulkWrite(blockInfo, 'blocks');
+                let res = await this.chClient.bulkWrite(blockInfo, 'blocks');
+                console.log(res);
             } catch (err) {
                 console.log(err);
             } finally {
@@ -156,7 +223,8 @@ class Indexer {
             }
             if (txInfo.length > 0) {
                 try{
-                    await this.mysqlClient.bulkWriteTxs(txInfo);
+                    //console.log(txInfo)
+                   await this.chClient.bulkWrite(txInfo, 'txs');
                 } catch(err) {
                     console.log(err);
                 } finally {
@@ -171,5 +239,5 @@ class Indexer {
 
 let indexer = new Indexer();
 indexer.init().then(() => {
-    indexer.run();
+    indexer.runLogs();
 });

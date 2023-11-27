@@ -1,7 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const Utils = require("./src/Utils/helpers");
+const Utils = require("../Utils/helpers");
 
 // Ethereum RPC URL
 const RPC_URL = 'https://rpc.eu-central-1.gateway.fm/v4/lukso/non-archival/mainnet'; // Replace with your Ethereum node RPC URL

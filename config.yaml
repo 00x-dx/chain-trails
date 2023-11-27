@@ -5,15 +5,22 @@ provider:
     # - "https://rpc.testnet.lukso.gateway.fm"
     - "https://rpc.eu-central-1.gateway.fm/v4/lukso/non-archival/mainnet"
     # - "https://rpc.testnet.lukso.gateway.fm/v4/lukso/non-archival/mainnet"
+  batch:
+    size: 100
 queue:
   url: "redis://localhost:6379"
   list:
-    backlog: "lukso:backlog"
+    backlog: "lukso:backlog_queue"
     live: "lukso:live"
-mongo:
-  url: "mongodb://localhost:27017"
-  db: "luksoMainnet"
-  collection:
+    dlq: "lukso:dlq"
+clickhouse:
+  host: "http://148.113.17.15:8123"
+  user: "default"
+  password: "xyz"
+  database: "mainnet"
+  batch:
+    size: 100
+  table:
     blocks: "blocks"
     transactions: "txs"
     logs: "logs"

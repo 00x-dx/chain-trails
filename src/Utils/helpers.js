@@ -8,6 +8,20 @@ class Helpers {
         const input = hexString.startsWith("0x") ? hexString.slice(2) : hexString;
         return input.length / 2;
     }
+    static TruncDateUTC(input) {
+        const date = new Date(input * 1000);
+        const pad = (number) => number.toString().padStart(2, '0');
+    
+        return date.getUTCFullYear() +
+               '-' + pad(date.getUTCMonth() + 1) +
+               '-' + pad(date.getUTCDate()) +
+               ' ' + pad(date.getUTCHours()) +
+               ':' + pad(date.getUTCMinutes()) +
+               ':' + pad(date.getUTCSeconds());
+    }
+    
+
+    
     static TruncDate(input) {
         let date = new Date(input * 1000)
         return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -81,7 +95,26 @@ class Helpers {
     static FormatAmount(amount) {
         return utils.formatUnits(amount, 'wei');
     }
-    static TimeMeta(time) {
+    static TimeMeta(input) {
+        let date = new Date(input * 1000);
+
+        const pad = (number) => number.toString().padStart(2, '0');
+
+        const year = date.getUTCFullYear();
+        const month = pad(date.getUTCMonth() + 1); // getUTCMonth returns 0-11
+        const day = pad(date.getUTCDate());
+        const hour = pad(date.getUTCHours());
+        const minute = pad(date.getUTCMinutes());
+
+        return {
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute
+        };
+    }
+    static TimeMetaV2(time) {
         return {
             month: time.getMonth(),
             year: time.getFullYear(),
@@ -136,7 +169,7 @@ class Helpers {
         if (withdrawals.length === 0) {
             return {
                 withdrawals_count: 0,
-                withdrawals_total: 0,
+                withdrawals_total: 0.0,
             }
         }
         let total = 0.0;
@@ -144,8 +177,8 @@ class Helpers {
             total += ( this.FormatValue(w.amount) * 10**9);
         }
         return {
-            count: withdrawals.length,
-            total: total,
+            withdrawals_count: withdrawals.length,
+            withdrawals_total: parseFloat(total.toFixed(4)),
         }
     }
 

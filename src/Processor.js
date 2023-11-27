@@ -1,120 +1,199 @@
 const Utils = require("./Utils/helpers");
-const Decorator = require("./Utils/decorator");
-const request = require("superagent");
-const {Block} = require("ethers");
-const dbConfig = require("./Utils/config").get("mongo");
+const axios = require('axios');
+
+// process
+// -> fetchFullBlock, TODO: add Logs, Traces etc.
+// -> processFullBlock
+// -> storeFullBlock
+
 class Processor {
-    constructor(fetcher, db) {
-        this.fetcher = fetcher;
+    constructor(provider, db, dlqQueue) {
+        this.provider = provider;
         this.db = db;
-        console.log("Processor has been created..")
+        this.dlqQueue = dlqQueue;
     }
-    async traces_tx(blockNumber, txs){
-        let res_ = [];
-        for (let tx of txs) {
-            let trace = await this.fetcher.getTxTrace(tx);
-            if(trace.result) {
-                res_.push({
-                    "blockNumber": blockNumber,
-                    "hash": tx,
-                    "traces": trace.result
-                })
-            }
-        }
-        return res_;
-    }
-    async traces(blockNumber, txs){
-        let res_ = [];
-        let traceInfo = await this.fetcher.getBlockTrace(blockNumber);
 
-        if(traceInfo && Array.isArray(traceInfo.result) && traceInfo.result.length > 0) {
-            for (let i = 0; i < traceInfo.result.length; i++) {
-                res_.push({
-                    "blockNumber": blockNumber,
-                    "hash": txs[i],
-                    "traces": traceInfo.result[i].result
-                })
-            }
-            return res_;
+    async process(blockJobs) {
+        let blocks = []
+        for(let blockJob of blockJobs) {
+            blocks.push(blockJob.blockNumber)
         }
-        return null;
-    }
-    async logs(blockNumber) {
-        let logs = await this.fetcher.getLogs(blockNumber);
-        let res = {}
-
-        for(let log of logs) {
-            if(res[log.transactionHash] === undefined) {
-                res[log.transactionHash] = [log]
-            } else {
-                res[log.transactionHash].push(log)
-            }
+        //sort blocks in ascending order
+        if(blocks.length > 1) {
+            blocks.sort((a, b) => a - b);
+            let[start, end] = [blocks[0], blocks[blocks.length - 1]];
+            console.log(`Processing blocks from ${start} to ${end}`);
+        } else {
+            console.log(`Processing block ${blocks[0]}`);
         }
-        let res_ = [];
-        for (let key in res) {
-            res_.push({
-                "hash": key,
-                "blockNumber": blockNumber,
-                "logs": res[key]
-            })
-        }
-        return res_;
-    }
-    async block(blockNumber, logs = false, trace= false, persistanceCheck = false) {
-        const logHash = { BlockNumber: blockNumber, Result: [], Persisted: false };
-
+        let rawBlocks, decoratedBlocks;
         try {
-            if(persistanceCheck) {
-                const isPersisted = await this.db.isPersisted(blockNumber);
-                if (isPersisted) {
-                    console.log(`Block ${blockNumber} has already been persisted. Skipping processing.`);
-                    return; // Early return if the block has already been persisted
-                }
-            }
-            let blockInfo = await this.fetcher.getBlock(blockNumber);
-            if (blockInfo) {
-
-                let blockRes = await this.db.save(dbConfig.collection.blocks, { number: blockNumber }, blockInfo);
-                logHash.Result.push({ "blockInfo": blockRes.message });
-
-                let blockInfoWithTx = await this.fetcher.getBlockWithTxs(blockNumber);
-
-                if (blockInfoWithTx?.result?.transactions?.length > 0) {
-                    let meta = Utils.BlockMeta(blockInfoWithTx.result);
-                    let transactions = Decorator.Txs(blockInfoWithTx.result.transactions, meta);
-                    console.log("Transactions:", transactions);
-
-                    // Save transactions to the database and log result
-                    let txRes = await this.db.saveBatch(dbConfig.collection.transactions, transactions);
-                    logHash.Result.push({"txInfo": txRes.acknowledged});
-                } else {
-                    logHash.Result.push({"txInfo": "No transactions"});
-                }
-
-                if(logs) {
-                    let logsInfo = await this.logs(blockNumber);
-                    if (logsInfo && logsInfo.length > 0) {
-                        let logsRes = await this.db.saveBatch(dbConfig.collection.logs, logsInfo);
-                        logHash.Result.push({"logsInfo": logsRes.acknowledged});
-                    }
-                }
-                if(trace) {
-                    let tracesInfo = await this.traces(blockNumber, blockInfo.transactions);
-                    if (tracesInfo && tracesInfo.length > 0) {
-                        let tracesRes = await this.db.saveBatch(dbConfig.collection.traces, tracesInfo);
-                        logHash.Result.push({"traceInfo": tracesRes.acknowledged});
-                    }
-                }
-
-                await this.db.createCheckpoint(blockNumber);
-                logHash.Persisted = true;
-            }
-        } catch (error) {
-            console.error(`An error occurred while processing block ${blockNumber}:`, error);
-            await this.db.addToDLQ(blockNumber, error, dbConfig.collection.dlq);
-        } finally {
-            console.log(logHash);
+            rawBlocks = await this.fetchBlockWithTxs(blocks);
+        } catch (err) {
+            console.log("Operation = fetchBlockWithTxs error = ", err);
+            await this.dlqQueue.addJob({blocks: blocks});
         }
+        try {
+            decoratedBlocks = this.decorateFullBlocks(rawBlocks);
+        } catch (err) {
+            console.log("Operation = decorateFullBlocks error = ", err);
+            await this.dlqQueue.addJob({blocks: blocks});
+        }
+        try {
+            await this.storeBlocks(decoratedBlocks);
+        } catch (err) {
+            console.log("Operation = storeBlocks error = ", err);
+            await this.dlqQueue.addJob({blocks: blocks});
+        }
+    }
+    // TODO: for future optimization on batchCalls & batchInserts.
+    async storeBlocks(decoratedBlocks) {
+        try {
+            await this.db.bulkWrite(decoratedBlocks.blockInfo, "blocks");
+            if(decoratedBlocks.txInfo.length > 0) {
+                await this.db.bulkWrite(decoratedBlocks.txInfo, "txs");
+            }
+        } catch (err) {
+            console.log(err);
+        } finally {
+            // fetch block numbers from blockInfo array
+            let blockNumbers = decoratedBlocks.blockInfo.map(block => block.block_number);
+            console.log(`blockNumbers = ${blockNumbers}, Persisted = true`);
+        }
+    }
+
+    async storeBlock(decoratedBlock) {
+        let [blockInfo, txInfo] = [decoratedBlock.blockInfo, decoratedBlock.txInfo];
+        try {
+            await this.db.bulkWrite(blockInfo, "blocks");
+            if(txInfo.length > 0) {
+                await this.db.bulkWrite(txInfo, "txs");
+            }
+        } catch (err) {
+            console.log(err);
+        } finally {
+            console.log(`blockNumber = ${blockInfo.block_number}, Persisted = true`);
+        }
+
+    }
+
+
+    async fetchBlockWithTxs(blocks) {
+        let batchData = [];
+        // TODO: for future optimization on batchCalls.
+        if(blocks.length > 1) {
+            for(let block of blocks) {
+                batchData.push(Utils.BlockWithTransactions(block));
+            }
+            console.log(`Fetching blocks ${blocks[0]} to ${blocks[blocks.length - 1]}`);
+        } else {
+            batchData.push(Utils.BlockWithTransactions(blocks[0]));
+            console.log(`Fetching block ${blocks[0]}`);
+        }
+        //TODO: randomize RPC_URL
+
+
+        let RPC_URL = this.provider.config.urls[0];
+        //console.log(`RPC_URL: ${RPC_URL}`);
+        let rawBlocks = [];
+        try {
+            const response = await axios.post(RPC_URL, batchData);
+            //console.log(`response: ${JSON.parse(response)}`)
+            rawBlocks = response.data.map(res => res.result).filter(block => block !== null);
+            //console.log(`blocks: ${JSON.stringify(rawBlocks, null, 2)}`)
+            return rawBlocks;
+        } catch (error) {
+            console.log(error)
+        }
+
+    }
+     decorateFullBlocks(blocks) {
+        //const blocks = JSON.parse(rawBlocks);
+        let blockInfo = [];
+        let txInfo = [];
+        // for future batch processing of blocks.
+        for (let block of blocks) {
+            let res = this.decorateFullBlock(block);
+            blockInfo.push(res.blockInfo);
+            if(res.txInfo.length > 0) {
+                // iterate over res.txInfo and add elements to txInfo
+                for(let tx of res.txInfo) {
+                    txInfo.push(tx);
+                }
+            }
+        }
+
+       return {
+            blockInfo: blockInfo,
+            txInfo: txInfo
+        };
+        //return blocks.map(this.processFullBlockEntry);
+
+        //return blocks.map(this.processFullBlockEntry);
+    }
+
+    decorateFullBlock(entry) {
+        let blockInfo = {};
+        blockInfo.block_number = Utils.Int(entry.number);
+        blockInfo.hash = entry.hash;
+        blockInfo.transactions_count = entry.transactions.length;
+        blockInfo.base_fee_per_gas = Utils.Int(entry.baseFeePerGas);
+        blockInfo.gas_limit = Utils.Int(entry.gasLimit);
+        blockInfo.gas_used = Utils.Int(entry.gasUsed);
+        blockInfo.size = Utils.Int(entry.size);
+        blockInfo.timestamp = Utils.Int(entry.timestamp);
+        blockInfo.time = Utils.TruncDateUTC(entry.timestamp)
+
+
+        Object.assign(blockInfo, Utils.TimeMeta(blockInfo.timestamp));
+        Object.assign(blockInfo, Utils.TxsMeta(entry.transactions));
+        Object.assign(blockInfo, Utils.WithdrawalsMeta(entry.withdrawals));
+
+        let txInfo = [];
+        if (entry.transactions && Array.isArray(entry.transactions) && entry.transactions.length > 0) {
+            txInfo = this.processTransactions(entry.transactions, blockInfo);
+        }
+        // TODO: Logs, Traces etc.
+
+        if(txInfo.length > 0) {
+            //console.log(txInfo)
+        }
+
+        return {
+            blockInfo: blockInfo,
+            txInfo: txInfo
+        }
+    }
+    processTransaction(tx, block) {
+        // Convert hex fields to decimal and add metadata for each transaction
+        let txInfo = {};
+        txInfo.hash = tx.hash;
+        txInfo.block_hash = tx.blockHash;
+        txInfo.block_number = block.block_number;
+        txInfo.from = tx.from;
+        txInfo.to = tx.to;
+        txInfo.gas = Utils.Int(tx.gas);
+        txInfo.gas_price = Utils.Int(tx.gasPrice);
+        txInfo.nonce = Utils.Int(tx.nonce);
+        txInfo.calldata_size = Utils.HexToBytes(tx.input);
+        txInfo.timestamp = block.timestamp;
+        txInfo.time = block.time;
+        txInfo.value = parseFloat(Utils.FormatValue(tx.value));
+        txInfo.input = tx.input;
+        //txInfo.meta = block.meta.time;
+        txInfo.method_id = Utils.MethodID(tx.input);
+        Object.assign(txInfo, Utils.TimeMeta(txInfo.timestamp));
+        return txInfo;
+    }
+
+    processTransactions(txs, block) {
+        let transactionsInfo = [];
+        //console.log(txs);
+        for (let tx of txs) {
+            let processedTx = this.processTransaction(tx, block);
+            transactionsInfo.push(processedTx);
+        }
+        return transactionsInfo;
     }
 }
 

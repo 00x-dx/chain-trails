@@ -1,4 +1,4 @@
-const serviceLocator = require('./src/Utils/ServiceLocator');
+const serviceLocator = require('../Utils/ServiceLocator');
 const { processor, db } = serviceLocator;
 async function processDLQ() {
     const dlqCollection = await db.getCollection(db.config.collection.dlq);

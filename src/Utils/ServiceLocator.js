@@ -1,16 +1,13 @@
-const { Provider } = require('../Provider');
 const { EtherProvider } = require('../EtherProvider');
-const { DB } = require('../DB');
-const { Fetcher } = require('../Fetcher');
 const { Processor } = require('../Processor');
 const config = require('./config');
 const { Queue } = require("../Queue");
-
+const { CHProxy } = require("../CHProxy");
 class ServiceLocator {
     constructor() {
         this.providerConfig = config.get('provider');
         console.log(this.providerConfig)
-        this.dbConfig = config.get('mongo');
+        this.dbConfig = config.get('clickhouse');
         console.log(this.dbConfig)
         this.queueConfig = config.get('queue');
         console.log(this.queueConfig)
@@ -20,19 +17,17 @@ class ServiceLocator {
         );
 
         // Initialize other dependencies
-        this.db = new DB(this.dbConfig);
-        this.fetcher = new Fetcher(this.provider);
-        this.processor = new Processor(this.fetcher, this.db);
+        this.db = new CHProxy(this.dbConfig);
+        //this.fetcher = new Fetcher(this.provider);
         this.liveQueue = new Queue(this.queueConfig.list.live, this.queueConfig.url);
         this.backlogQueue = new Queue(this.queueConfig.list.backlog, this.queueConfig.url);
+        this.dlqQueue = new Queue(this.queueConfig.list.dlq, this.queueConfig.url);
+        this.processor = new Processor(this.provider, this.db, this.dlqQueue);
+
     }
 
     getDb() {
         return this.db;
-    }
-
-    getFetcher() {
-        return this.fetcher;
     }
 
     getProcessor() {
@@ -46,6 +41,9 @@ class ServiceLocator {
     }
     getBacklogQueue() {
         return this.backlogQueue;
+    }
+    getDlqQueue() {
+        return this.dlqQueue;
     }
 }
 

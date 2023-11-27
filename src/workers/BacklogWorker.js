@@ -2,8 +2,8 @@ const { processor, backlogQueue } = require('../Utils/ServiceLocator');
 class BacklogWorker {
 
     async process() {
-        backlogQueue.process(2, async (job) => {
-            await processor.block(job.data.blockNumber, false, true);
+        backlogQueue.process(3, async (job) => {
+            await processor.process(job.data.blocks);
             console.log("Processing Job: ", job.data);
             return done(null, job.data);
         });
