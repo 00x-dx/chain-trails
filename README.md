@@ -11,7 +11,7 @@ pm2
 ```
 ## Catching historical data:
 * You can modify src/backlog/backlog.js with the range you are interested in
-* And then run the backlog worker, via pm2 start src/workers/BacklogWorker.js
+* And then run the backlog worker, via ```pm2 start src/workers/BacklogWorker.js```
 ## Migrations:
 * Run migrations from migrations/
 * Update creds in config.yaml
