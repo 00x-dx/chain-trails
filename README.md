@@ -1,7 +1,5 @@
 # chain-trails
 ```
-demo link: http://148.113.17.15:3000/d/c8d9f7a4-3c35-4da4-8b6d-03ecea76da86/chain-trails-lukso?orgId=1&refresh=5s
-creds: admin/6dT~TD'qd6%G'zU
 ```
 ## Pre-req:
 ```
